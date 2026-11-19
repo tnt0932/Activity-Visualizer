@@ -346,17 +346,17 @@ function decompressIfGzip(bytes: Uint8Array, name: string): {
   bytes: Uint8Array;
   innerName: string;
 } {
-  // Check gzip magic bytes 0x1f 0x8b or .gz extension
-  const isGz =
-    name.toLowerCase().endsWith('.gz') ||
-    (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b);
-  if (!isGz) {
-    return { bytes, innerName: name };
+  const hasGzipMagic = bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+  const innerName = name.replace(/\.gz$/i, '');
+
+  if (!hasGzipMagic) {
+    return { bytes, innerName };
   }
+
   const inflated = ungzip(bytes);
   return {
     bytes: inflated,
-    innerName: name.replace(/\.gz$/i, ''),
+    innerName,
   };
 }
 

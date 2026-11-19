@@ -27,7 +27,7 @@ import {
   fetchTerrariumElevation,
 } from './utils/openData';
 import { PALETTES } from './utils/palettes';
-import { generateSampleActivities } from './utils/sampleRuns';
+import { loadDefaultActivities } from './utils/sampleRuns';
 import { parseUploadedFiles } from './utils/stravaParser';
 
 const DEFAULT_SETTINGS: SceneSettings = {
@@ -64,15 +64,14 @@ const DEFAULT_SETTINGS: SceneSettings = {
 export default function App() {
   const viewportRef = useRef<StravaViewportHandle | null>(null);
 
-  // Core activity dataset state
-  const [rawActivities, setRawActivities] = useState<ParsedActivity[]>(() =>
-    generateSampleActivities(),
-  );
+  // Core activity dataset state (loaded from bundled src/activities/*.fit.gz)
+  const [rawActivities, setRawActivities] = useState<ParsedActivity[]>([]);
   const [datasetTitle, setDatasetTitle] = useState('North Vancouver Runs');
   const [isSampleData, setIsSampleData] = useState(true);
-  const [homeOrigin, setHomeOrigin] = useState<{ lat: number; lon: number }>(() =>
-    detectHomeOrigin(generateSampleActivities()),
-  );
+  const [homeOrigin, setHomeOrigin] = useState<{ lat: number; lon: number }>({
+    lat: 49.347662,
+    lon: -123.023114
+  });
 
   // Playback & UI state
   const [settings, setSettings] = useState<SceneSettings>(DEFAULT_SETTINGS);
@@ -105,6 +104,25 @@ export default function App() {
     useState<BasemapTileResult | null>(null);
 
   const palette = PALETTES[settings.palette];
+
+  // Load bundled default .fit.gz activities on mount
+  useEffect(() => {
+    let cancelled = false;
+    loadDefaultActivities()
+      .then((acts) => {
+        if (cancelled || acts.length === 0) return;
+        setRawActivities(acts);
+        setHomeOrigin(detectHomeOrigin(acts));
+        setElapsedSec(0);
+        setIsPlaying(true);
+      })
+      .catch(() => {
+        // Ignore if bundled activities fail to load
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Keep document root dark class synced with selected palette
   useEffect(() => {
@@ -428,11 +446,12 @@ export default function App() {
     setUploadOpen(false);
   }, []);
 
-  const handleLoadSample = useCallback(() => {
-    const sample = generateSampleActivities();
+  const handleLoadSample = useCallback(async () => {
+    const sample = await loadDefaultActivities();
+    if (sample.length === 0) return;
     setRawActivities(sample);
     setHomeOrigin(detectHomeOrigin(sample));
-    setDatasetTitle('Presidio Home Runs');
+    setDatasetTitle('North Vancouver Runs');
     setIsSampleData(true);
     setSettings((prev) => ({
       ...prev,
