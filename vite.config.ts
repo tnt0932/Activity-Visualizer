@@ -6,7 +6,7 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: '/activity-visualizer/',
+    base: '/Activity-Visualizer/',
     plugins: [
       react(),
       tailwindcss(),
