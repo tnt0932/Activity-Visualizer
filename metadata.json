@@ -1,0 +1,6 @@
+{
+  "name": "HomeRuns 3D",
+  "description": "Synchronized 3D Strava activity motion graphics and additive heatmaps rendered locally in WebGL from Strava ZIP exports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
