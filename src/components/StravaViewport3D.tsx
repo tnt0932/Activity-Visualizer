@@ -1929,7 +1929,7 @@ export const StravaViewport3D = forwardRef<
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `homeruns-${formatClockHMS(curSec).replace(/:/g, '-')}.png`;
+        a.download = `activityvid-${formatClockHMS(curSec).replace(/:/g, '-')}.png`;
         a.click();
         URL.revokeObjectURL(url);
       }, 'image/png');
@@ -2033,7 +2033,7 @@ export const StravaViewport3D = forwardRef<
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'homeruns-motion-graphic.webm';
+      a.download = 'activityvid-motion-graphic.webm';
       a.click();
       URL.revokeObjectURL(url);
       tickCb(maxSec);
