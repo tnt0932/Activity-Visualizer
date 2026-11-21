@@ -483,7 +483,7 @@ export const StravaViewport3D = forwardRef<
     );
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = !isSoftwareGl;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
 
     const canvas = renderer.domElement;
     canvas.style.display = 'block';
@@ -1281,7 +1281,7 @@ export const StravaViewport3D = forwardRef<
 
       const terrainMat = new THREE.MeshStandardMaterial({
         map: mapTexture,
-        color: mapTexture ? terrainTint : undefined,
+        color: mapTexture ? terrainTint : 0xffffff,
         vertexColors: !mapTexture,
         roughness: isSatStyle ? 0.99 : mapStyle === 'studio' ? 0.97 : 0.88,
         metalness: isSatStyle || mapStyle === 'studio' ? 0.0 : 0.04,
