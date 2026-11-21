@@ -434,6 +434,9 @@ export const StravaViewport3D = forwardRef<
     controls: OrbitControls;
     composer: EffectComposer | null;
     bloomPass: UnrealBloomPass | null;
+    hemiLight: THREE.HemisphereLight;
+    keyLight: THREE.DirectionalLight;
+    rimLight: THREE.DirectionalLight;
     terrainGroup: THREE.Group;
     streetsGroup: THREE.Group;
     homeGroup: THREE.Group;
@@ -935,6 +938,9 @@ export const StravaViewport3D = forwardRef<
       controls,
       composer,
       bloomPass,
+      hemiLight,
+      keyLight,
+      rimLight,
       terrainGroup,
       streetsGroup,
       homeGroup,
@@ -1052,13 +1058,14 @@ export const StravaViewport3D = forwardRef<
     const palette = PALETTES[settings.palette];
     const mapStyle = settings.baseMapStyle;
     const isLightMap = mapStyle === 'light-map' || palette.isLight;
+    const isDarkStudio = mapStyle === 'studio' && !palette.isLight;
     const bgHex =
       mapStyle === 'light-map'
         ? 0xe8e4db
         : mapStyle === 'studio'
           ? palette.isLight
             ? 0xeeebe4
-            : 0x030407
+            : 0x040508
           : mapStyle === 'dark-map' ||
               mapStyle === 'satellite' ||
               mapStyle === 'satellite-streets'
@@ -1067,6 +1074,9 @@ export const StravaViewport3D = forwardRef<
 
     engine.scene.background = new THREE.Color(bgHex);
     engine.scene.fog = new THREE.FogExp2(bgHex, 0.0021);
+    engine.hemiLight.intensity = isDarkStudio ? 0.88 : 0.85;
+    engine.keyLight.intensity = isDarkStudio ? 1.9 : 1.85;
+    engine.rimLight.intensity = isDarkStudio ? 0.55 : 0.65;
 
     // Keep HDR bloom threshold >= 0.94 so tone-mapped basemaps & satellite roads NEVER glow;
     // only HDR (toneMapped: false) trails and markers above 1.0 trigger bloom.
@@ -1153,14 +1163,15 @@ export const StravaViewport3D = forwardRef<
         mapStyle === 'studio'
           ? palette.isLight
             ? 0xe2ddd2
-            : 0x04060a
+            : 0x111521
           : palette.terrainLowHex,
       );
+
       const cHigh = new THREE.Color(
         mapStyle === 'studio'
           ? palette.isLight
             ? 0xf7f4ed
-            : 0x10151f
+            : 0x161d2b
           : palette.terrainHighHex,
       );
       const eleSpan = Math.max(1, maxEle - minEle);
@@ -1263,7 +1274,7 @@ export const StravaViewport3D = forwardRef<
             mapStyle === 'studio'
               ? palette.isLight
                 ? 0xc4bdb0
-                : 0x141a24
+                : 0x243044
               : palette.contourHex,
           ),
         },
@@ -1279,13 +1290,14 @@ export const StravaViewport3D = forwardRef<
           ? 0xe2e6ec
           : 0xffffff;
 
-      const terrainMat = new THREE.MeshStandardMaterial({
+      const terrainMat = new THREE.MeshPhysicalMaterial({
         map: mapTexture,
         color: mapTexture ? terrainTint : 0xffffff,
         vertexColors: !mapTexture,
-        roughness: isSatStyle ? 0.99 : mapStyle === 'studio' ? 0.97 : 0.88,
+        roughness: isSatStyle ? 0.99 : mapStyle === 'studio' ? 0.96 : 0.88,
         metalness: isSatStyle || mapStyle === 'studio' ? 0.0 : 0.04,
-        envMapIntensity: isSatStyle ? 0.1 : mapStyle === 'studio' ? 0.08 : 0.6,
+        specularIntensity: isDarkStudio ? 0.1 : isSatStyle ? 0.1 : 0.5,
+        envMapIntensity: isDarkStudio ? 0.1 : isSatStyle ? 0.1 : mapStyle === 'studio' ? 0.08 : 0.6,
       });
 
       terrainMat.onBeforeCompile = (shader) => {
@@ -1413,22 +1425,32 @@ export const StravaViewport3D = forwardRef<
                 : palette.isLight
                   ? 0x8c8275
                   : 0x475569
-            : palette.id === 'cobalt'
-              ? 0x4b7ec4
-              : palette.id === 'emerald'
-                ? 0x4d9980
-                : palette.isLight
-                  ? 0x78716c
-                  : 0x64748b;
+            : mapStyle === 'studio'
+              ? palette.id === 'cobalt'
+                ? 0x2d466e
+                : palette.id === 'emerald'
+                  ? 0x264d40
+                  : palette.isLight
+                    ? 0x78716c
+                    : 0x334155
+              : palette.id === 'cobalt'
+                ? 0x4b7ec4
+                : palette.id === 'emerald'
+                  ? 0x4d9980
+                  : palette.isLight
+                    ? 0x78716c
+                    : 0x64748b;
 
       const streetOverlayOpacity =
         mapStyle === 'blueprint'
           ? 0.74
           : mapStyle === 'minimal'
             ? 0.62
-            : palette.isLight
-              ? 0.72
-              : 0.78;
+            : mapStyle === 'studio' && !palette.isLight
+              ? 0.58
+              : palette.isLight
+                ? 0.72
+                : 0.78;
 
       const streetTintUniform = { value: new THREE.Color(streetTintHex) };
       const ovMat = new THREE.MeshBasicMaterial({
@@ -1516,7 +1538,9 @@ export const StravaViewport3D = forwardRef<
                 ? 0x94a3b8
                 : mapStyle === 'satellite' || mapStyle === 'satellite-streets'
                   ? 0xcbd5e1
-                  : palette.streetHex;
+                  : isDarkStudio
+                    ? 0x293548
+                    : palette.streetHex;
 
         const streetMat = new THREE.LineBasicMaterial({
           color: vectorStreetColor,
@@ -1533,7 +1557,9 @@ export const StravaViewport3D = forwardRef<
                     ? 0.24
                     : mapStyle === 'light-map'
                       ? 0.28
-                      : Math.max(0.32, palette.streetOpacity),
+                      : isDarkStudio
+                        ? 0.28
+                        : Math.max(0.32, palette.streetOpacity),
         });
         const streetLines = new THREE.LineSegments(streetGeo, streetMat);
         engine.streetsGroup.add(streetLines);

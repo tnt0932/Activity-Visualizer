@@ -38,7 +38,7 @@ const DEFAULT_SETTINGS: SceneSettings = {
   trailStyle: 'heatmap',
   palette: 'ember',
   baseMapStyle: 'studio',
-  elevationExaggeration: 1.5,
+  elevationExaggeration: 1.0,
   showTerrain: true,
   showStreets: true,
   showContours: true,
