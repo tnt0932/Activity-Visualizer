@@ -5,9 +5,12 @@ import {
   StravaViewport3D,
   type StravaViewportHandle,
 } from './components/StravaViewport3D';
+import { ExportModal } from './components/ExportModal';
 import { UploadModal } from './components/UploadModal';
 import type {
   ElevationGrid,
+  ExportMode,
+  ExportOptions,
   ParsedActivity,
   ParseProgress,
   SceneSettings,
@@ -61,6 +64,21 @@ const DEFAULT_SETTINGS: SceneSettings = {
   dateRangeEndMs: null,
 };
 
+const DEFAULT_EXPORT_OPTIONS: ExportOptions = {
+  mode: 'snapshot',
+  aspectRatio: '16:9',
+  resolution: '1080p',
+  showDataPanel: true,
+  showTimerAndCounts: true,
+  showHistogram: true,
+  showTitleAndDistance: true,
+  hudPosition: 'top-left',
+  hideHomeBeacon: true,
+  videoDurationSec: 12,
+  videoFps: 30,
+  videoAutoOrbit: false,
+};
+
 export default function App() {
   const viewportRef = useRef<StravaViewportHandle | null>(null);
 
@@ -87,7 +105,12 @@ export default function App() {
   const [parseProgress, setParseProgress] = useState<ParseProgress | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [windowDragging, setWindowDragging] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportOptions, setExportOptions] = useState<ExportOptions>(
+    DEFAULT_EXPORT_OPTIONS,
+  );
   const [exportProgress, setExportProgress] = useState<number | null>(null);
+  const exportAbortRef = useRef<AbortController | null>(null);
 
   // Open Data Terrain, OSM Streets & Raster Basemap Tiles
   const [remoteElevation, setRemoteElevation] = useState<ElevationGrid | null>(
@@ -486,6 +509,12 @@ export default function App() {
         if (e.key === 'Escape') setUploadOpen(false);
         return;
       }
+      if (exportModalOpen) {
+        if (e.key === 'Escape' && exportProgress === null) {
+          setExportModalOpen(false);
+        }
+        return;
+      }
       if (e.key === 'Escape' && isPickingHome) {
         setIsPickingHome(false);
         return;
@@ -507,7 +536,14 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [uploadOpen, isPickingHome, elapsedSec, maxDurationSec]);
+  }, [
+    uploadOpen,
+    exportModalOpen,
+    exportProgress,
+    isPickingHome,
+    elapsedSec,
+    maxDurationSec,
+  ]);
 
   // Global drag-and-drop file handler anywhere on window
   useEffect(() => {
@@ -555,17 +591,50 @@ export default function App() {
     });
   }, [elapsedSec, maxDurationSec]);
 
-  const handleExportVideo = useCallback(async () => {
+  const handleOpenExportModal = useCallback(
+    (mode: ExportMode) => {
+      setExportOptions((prev) => ({
+        ...prev,
+        mode,
+        videoAutoOrbit: mode === 'video' ? settings.autoOrbit : prev.videoAutoOrbit,
+      }));
+      setExportModalOpen(true);
+    },
+    [settings.autoOrbit],
+  );
+
+  const handleConfirmExport = useCallback(async () => {
     if (!viewportRef.current || exportProgress !== null) return;
+    if (exportOptions.mode === 'snapshot') {
+      viewportRef.current.captureSnapshot(datasetTitle, exportOptions);
+      setExportModalOpen(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    exportAbortRef.current = controller;
     setExportProgress(0);
     try {
-      await viewportRef.current.exportVideo(datasetTitle, (pct) => {
-        setExportProgress(pct);
-      });
+      await viewportRef.current.exportVideo(
+        datasetTitle,
+        exportOptions,
+        (pct) => {
+          setExportProgress(pct);
+        },
+        controller.signal,
+      );
+      if (!controller.signal.aborted) {
+        setExportModalOpen(false);
+      }
     } finally {
+      exportAbortRef.current = null;
       setExportProgress(null);
     }
-  }, [datasetTitle, exportProgress]);
+  }, [datasetTitle, exportOptions, exportProgress]);
+
+  const handleCancelVideoExport = useCallback(() => {
+    exportAbortRef.current?.abort();
+  }, []);
 
   return (
     <main
@@ -629,8 +698,8 @@ export default function App() {
           setUploadError(null);
           setUploadOpen(true);
         }}
-        onCaptureSnapshot={() => viewportRef.current?.captureSnapshot(datasetTitle)}
-        onExportVideo={handleExportVideo}
+        onCaptureSnapshot={() => handleOpenExportModal('snapshot')}
+        onExportVideo={() => handleOpenExportModal('video')}
       />
 
       {/* Empty Filter Guard */}
@@ -736,6 +805,24 @@ export default function App() {
         onClose={() => setUploadOpen(false)}
         onFilesSelected={handleFilesSelected}
         onLoadSample={handleLoadSample}
+      />
+
+      {/* Export Render Modal */}
+      <ExportModal
+        isOpen={exportModalOpen}
+        palette={palette}
+        options={exportOptions}
+        exportProgress={exportProgress}
+        viewportWidth={typeof window !== 'undefined' ? window.innerWidth : 1440}
+        viewportHeight={typeof window !== 'undefined' ? window.innerHeight : 900}
+        datasetTitle={datasetTitle}
+        activityCount={filteredActivities.length}
+        onChangeOptions={(patch) =>
+          setExportOptions((prev) => ({ ...prev, ...patch }))
+        }
+        onConfirmExport={handleConfirmExport}
+        onCancelVideo={handleCancelVideoExport}
+        onClose={() => setExportModalOpen(false)}
       />
 
       {/* Global Window Drop Overlay */}

@@ -15,11 +15,13 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import type {
   CameraPreset,
   ElevationGrid,
+  ExportOptions,
   ProjectedActivity,
   SceneSettings,
   SpatialBounds,
   StreetNetwork,
 } from '../types/activity';
+import { resolveExportDimensions } from '../utils/exportDimensions';
 import {
   formatClockHMS,
   interpolateActivityAtTime,
@@ -31,10 +33,12 @@ import { type BasemapTileResult, latToMercatorY } from '../utils/openData';
 import { PALETTES } from '../utils/palettes';
 
 export interface StravaViewportHandle {
-  captureSnapshot: (datasetTitle: string) => void;
+  captureSnapshot: (datasetTitle: string, options: ExportOptions) => void;
   exportVideo: (
     datasetTitle: string,
+    options: ExportOptions,
     onProgress: (pct: number) => void,
+    signal?: AbortSignal,
   ) => Promise<void>;
   resetCamera: () => void;
 }
@@ -260,7 +264,7 @@ function getCameraPresetTarget(
 
 /**
  * Composites the 3D WebGL frame + semantic Motion Graphics HUD onto a 2D canvas
- * for crisp PNG snapshots and WebM video exports.
+ * for crisp PNG snapshots and WebM video exports across any aspect ratio & resolution.
  */
 function drawExportHud(
   ctx: CanvasRenderingContext2D,
@@ -271,8 +275,20 @@ function drawExportHud(
   elapsedSec: number,
   maxDurationSec: number,
   isLight: boolean,
+  options: ExportOptions,
 ) {
-  const pad = Math.round(width * 0.032);
+  if (!options.showDataPanel) return;
+  const showMeta = options.showTitleAndDistance;
+  const showClock = options.showTimerAndCounts;
+  const showHist = options.showHistogram;
+  if (!showMeta && !showClock && !showHist) return;
+
+  const minDim = Math.min(width, height);
+  const s = Math.max(0.72, Math.min(2.6, minDim / 960));
+  const margin = Math.round(28 * s);
+  const padX = Math.round(18 * s);
+  const padY = Math.round(16 * s);
+
   const { buckets, maxBucketTotal, stillRunning, finishedCount } =
     buildFinishHistogram(activities, elapsedSec, maxDurationSec, 18);
 
@@ -281,76 +297,110 @@ function drawExportHud(
   const accent = isLight ? '#c2410c' : '#fb923c';
   const barTrack = isLight ? 'rgba(15, 23, 42, 0.12)' : 'rgba(248, 250, 252, 0.14)';
   const panelBg = isLight
-    ? 'rgba(243, 240, 233, 0.82)'
-    : 'rgba(7, 9, 14, 0.72)';
+    ? 'rgba(243, 240, 233, 0.84)'
+    : 'rgba(7, 9, 14, 0.76)';
 
-  ctx.save();
-  // Subtle left HUD scrim
-  ctx.fillStyle = panelBg;
-  const boxW = Math.min(340, width * 0.34);
-  const boxH = 198;
-  ctx.beginPath();
-  ctx.roundRect(pad - 12, pad - 10, boxW, boxH, 12);
-  ctx.fill();
+  const boxW = Math.min(Math.round(336 * s), Math.round(width - margin * 2));
+  let innerH = 0;
+  if (showMeta) innerH += Math.round(20 * s);
+  if (showClock) innerH += Math.round((showMeta ? 74 : 68) * s);
+  if (showHist) innerH += Math.round((showMeta || showClock ? 88 : 78) * s);
+  const boxH = padY * 2 + innerH;
 
-  // Title, count & combined total distance
-  const totalKmVal =
-    activities.reduce((sum, a) => sum + a.distanceM, 0) / 1000;
-  const totalKmLabel =
-    totalKmVal >= 1000
-      ? `${Math.round(totalKmVal).toLocaleString()} km`
-      : `${totalKmVal.toFixed(1)} km`;
-  ctx.fillStyle = textMuted;
-  ctx.font = '600 13px "Plus Jakarta Sans", system-ui, sans-serif';
-  ctx.fillText(
-    `${datasetTitle} · ${activities.length} runs · ${totalKmLabel}`,
-    pad,
-    pad + 12,
-  );
-
-  // Elapsed Clock
-  ctx.fillStyle = textPrimary;
-  ctx.font = '700 38px "JetBrains Mono", monospace';
-  ctx.fillText(formatClockHMS(elapsedSec), pad, pad + 54);
-
-  // Still running counter
-  ctx.fillStyle = accent;
-  ctx.font = '600 15px "JetBrains Mono", monospace';
-  ctx.fillText(`${stillRunning} Still Running`, pad, pad + 80);
-
-  ctx.fillStyle = textMuted;
-  ctx.font = '500 13px "Plus Jakarta Sans", system-ui, sans-serif';
-  ctx.fillText(`· ${finishedCount} Finished`, pad + 158, pad + 80);
-
-  // Finish-time histogram bars
-  const histX = pad;
-  const histY = pad + 102;
-  const histW = boxW - 24;
-  const histH = 56;
-  const gap = 3;
-  const barW = (histW - gap * (buckets.length - 1)) / buckets.length;
-
-  for (let i = 0; i < buckets.length; i++) {
-    const b = buckets[i];
-    const x = histX + i * (barW + gap);
-    const totalH = Math.max(2, (b.totalCount / maxBucketTotal) * histH);
-    const doneH = (b.completedCount / maxBucketTotal) * histH;
-
-    ctx.fillStyle = barTrack;
-    ctx.fillRect(x, histY + histH - totalH, barW, totalH);
-
-    if (doneH > 0) {
-      ctx.fillStyle = accent;
-      ctx.fillRect(x, histY + histH - doneH, barW, doneH);
-    }
+  let boxX = margin;
+  let boxY = margin;
+  if (options.hudPosition === 'top-right') {
+    boxX = width - margin - boxW;
+  } else if (options.hudPosition === 'bottom-left') {
+    boxY = height - margin - boxH;
+  } else if (options.hudPosition === 'bottom-center') {
+    boxX = Math.round((width - boxW) / 2);
+    boxY = height - margin - boxH;
   }
 
-  ctx.fillStyle = textMuted;
-  ctx.font = '500 11px "JetBrains Mono", monospace';
-  ctx.fillText('0m', histX, histY + histH + 14);
-  const maxMinLabel = `${Math.round(maxDurationSec / 60)}m`;
-  const mWidth = ctx.measureText(maxMinLabel).width;
-  ctx.fillText(maxMinLabel, histX + histW - mWidth, histY + histH + 14);
+  ctx.save();
+  ctx.fillStyle = panelBg;
+  ctx.beginPath();
+  ctx.roundRect(boxX, boxY, boxW, boxH, Math.round(12 * s));
+  ctx.fill();
+
+  const contentX = boxX + padX;
+  const contentW = boxW - padX * 2;
+  let cursorY = boxY + padY;
+
+  if (showMeta) {
+    const totalKmVal =
+      activities.reduce((sum, a) => sum + a.distanceM, 0) / 1000;
+    const totalKmLabel =
+      totalKmVal >= 1000
+        ? `${Math.round(totalKmVal).toLocaleString()} km`
+        : `${totalKmVal.toFixed(1)} km`;
+    ctx.fillStyle = textMuted;
+    ctx.font = `600 ${Math.round(13 * s)}px "Plus Jakarta Sans", system-ui, sans-serif`;
+    const metaText = `${datasetTitle} · ${activities.length} runs · ${totalKmLabel}`;
+    ctx.fillText(metaText, contentX, cursorY + Math.round(12 * s), contentW);
+    cursorY += Math.round(24 * s);
+  }
+
+  if (showClock) {
+    ctx.fillStyle = textPrimary;
+    ctx.font = `700 ${Math.round(36 * s)}px "JetBrains Mono", monospace`;
+    ctx.fillText(
+      formatClockHMS(elapsedSec),
+      contentX,
+      cursorY + Math.round(32 * s),
+    );
+
+    const statusY = cursorY + Math.round(58 * s);
+    ctx.fillStyle = accent;
+    ctx.font = `600 ${Math.round(14 * s)}px "JetBrains Mono", monospace`;
+    const runText = `${stillRunning} Still Running`;
+    ctx.fillText(runText, contentX, statusY);
+    const runW = ctx.measureText(runText).width;
+
+    ctx.fillStyle = textMuted;
+    ctx.font = `500 ${Math.round(13 * s)}px "Plus Jakarta Sans", system-ui, sans-serif`;
+    ctx.fillText(
+      ` · ${finishedCount} Finished`,
+      contentX + runW + Math.round(4 * s),
+      statusY,
+    );
+    cursorY += Math.round(74 * s);
+  }
+
+  if (showHist) {
+    const histY = cursorY + Math.round(6 * s);
+    const histH = Math.round(54 * s);
+    const gap = Math.max(2, Math.round(3 * s));
+    const barW = (contentW - gap * (buckets.length - 1)) / buckets.length;
+
+    for (let i = 0; i < buckets.length; i++) {
+      const b = buckets[i];
+      const x = contentX + i * (barW + gap);
+      const totalH = Math.max(
+        Math.max(2, Math.round(2 * s)),
+        (b.totalCount / maxBucketTotal) * histH,
+      );
+      const doneH = (b.completedCount / maxBucketTotal) * histH;
+
+      ctx.fillStyle = barTrack;
+      ctx.fillRect(x, histY + histH - totalH, barW, totalH);
+
+      if (doneH > 0) {
+        ctx.fillStyle = accent;
+        ctx.fillRect(x, histY + histH - doneH, barW, doneH);
+      }
+    }
+
+    ctx.fillStyle = textMuted;
+    ctx.font = `500 ${Math.round(11 * s)}px "JetBrains Mono", monospace`;
+    const labelY = histY + histH + Math.round(14 * s);
+    ctx.fillText('0m', contentX, labelY);
+    const maxMinLabel = `${Math.round(maxDurationSec / 60)}m`;
+    const mWidth = ctx.measureText(maxMinLabel).width;
+    ctx.fillText(maxMinLabel, contentX + contentW - mWidth, labelY);
+  }
+
   ctx.restore();
 }
 
@@ -1919,9 +1969,10 @@ export const StravaViewport3D = forwardRef<
       engine.requestRender();
     },
 
-    captureSnapshot: (datasetTitle: string) => {
+    captureSnapshot: (datasetTitle: string, exportOptions: ExportOptions) => {
       const engine = engineRef.current;
-      if (!engine) return;
+      const container = mountRef.current;
+      if (!engine || !container) return;
       const {
         activities: curActs,
         elapsedSec: curSec,
@@ -1930,43 +1981,98 @@ export const StravaViewport3D = forwardRef<
       } = propsRef.current;
       const palette = PALETTES[curSettings.palette];
 
-      engine.updateFrameState(curSec);
-      engine.renderImmediate();
-
-      const srcCanvas = engine.renderer.domElement;
-      const out = document.createElement('canvas');
-      out.width = srcCanvas.width;
-      out.height = srcCanvas.height;
-      const ctx = out.getContext('2d')!;
-      ctx.drawImage(srcCanvas, 0, 0);
-      drawExportHud(
-        ctx,
-        out.width,
-        out.height,
-        datasetTitle,
-        curActs,
-        curSec,
-        maxSec,
-        palette.isLight,
+      const viewW = container.clientWidth || window.innerWidth;
+      const viewH = container.clientHeight || window.innerHeight;
+      const { width: targetW, height: targetH } = resolveExportDimensions(
+        exportOptions.aspectRatio,
+        exportOptions.resolution,
+        viewW,
+        viewH,
       );
 
-      out.toBlob((blob) => {
-        if (!blob) return;
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `activityvid-${formatClockHMS(curSec).replace(/:/g, '-')}.png`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }, 'image/png');
+      const prevPixelRatio = engine.renderer.getPixelRatio();
+      const prevAspect = engine.camera.aspect;
+      const prevFov = engine.camera.fov;
+      const prevHomeVisible = engine.homeGroup.visible;
+
+      try {
+        const exportAspect = targetW / targetH;
+        engine.renderer.setPixelRatio(1);
+        engine.renderer.setSize(targetW, targetH, false);
+        if (engine.composer) engine.composer.setSize(targetW, targetH);
+        if (engine.bloomPass) engine.bloomPass.resolution.set(targetW, targetH);
+
+        engine.camera.aspect = exportAspect;
+        if (exportAspect < 1) {
+          engine.camera.fov = Math.min(
+            74,
+            (2 *
+              Math.atan(
+                Math.tan((prevFov * Math.PI) / 360) /
+                  Math.max(0.54, exportAspect),
+              ) *
+              180) /
+              Math.PI,
+          );
+        }
+        engine.camera.updateProjectionMatrix();
+
+        if (exportOptions.hideHomeBeacon) {
+          engine.homeGroup.visible = false;
+        }
+
+        engine.updateFrameState(curSec);
+        engine.renderImmediate();
+
+        const srcCanvas = engine.renderer.domElement;
+        const out = document.createElement('canvas');
+        out.width = targetW;
+        out.height = targetH;
+        const ctx = out.getContext('2d')!;
+        ctx.drawImage(srcCanvas, 0, 0, targetW, targetH);
+        drawExportHud(
+          ctx,
+          targetW,
+          targetH,
+          datasetTitle,
+          curActs,
+          curSec,
+          maxSec,
+          palette.isLight,
+          exportOptions,
+        );
+
+        out.toBlob((blob) => {
+          if (!blob) return;
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `activityvid-${targetW}x${targetH}-${formatClockHMS(curSec).replace(/:/g, '-')}.png`;
+          a.click();
+          URL.revokeObjectURL(url);
+        }, 'image/png');
+      } finally {
+        engine.homeGroup.visible = prevHomeVisible;
+        engine.camera.aspect = prevAspect;
+        engine.camera.fov = prevFov;
+        engine.camera.updateProjectionMatrix();
+        engine.renderer.setPixelRatio(prevPixelRatio);
+        engine.renderer.setSize(viewW, viewH, false);
+        if (engine.composer) engine.composer.setSize(viewW, viewH);
+        if (engine.bloomPass) engine.bloomPass.resolution.set(viewW, viewH);
+        engine.renderImmediate();
+      }
     },
 
     exportVideo: async (
       datasetTitle: string,
+      exportOptions: ExportOptions,
       onProgress: (pct: number) => void,
+      signal?: AbortSignal,
     ) => {
       const engine = engineRef.current;
-      if (!engine) return;
+      const container = mountRef.current;
+      if (!engine || !container) return;
       const {
         activities: curActs,
         maxDurationSec: maxSec,
@@ -1979,20 +2085,37 @@ export const StravaViewport3D = forwardRef<
       setPlayingCb(false);
 
       const palette = PALETTES[curSettings.palette];
-      const srcCanvas = engine.renderer.domElement;
+      const viewW = container.clientWidth || window.innerWidth;
+      const viewH = container.clientHeight || window.innerHeight;
+      const { width: targetW, height: targetH } = resolveExportDimensions(
+        exportOptions.aspectRatio,
+        exportOptions.resolution,
+        viewW,
+        viewH,
+      );
+
+      const prevPixelRatio = engine.renderer.getPixelRatio();
+      const prevAspect = engine.camera.aspect;
+      const prevFov = engine.camera.fov;
+      const prevHomeVisible = engine.homeGroup.visible;
+      const savedCameraPos = engine.camera.position.clone();
+
       const exportCanvas = document.createElement('canvas');
-      exportCanvas.width = Math.min(1920, srcCanvas.width);
-      exportCanvas.height = Math.min(1080, srcCanvas.height);
+      exportCanvas.width = targetW;
+      exportCanvas.height = targetH;
       const ctx = exportCanvas.getContext('2d')!;
 
+      const fps = exportOptions.videoFps;
       const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
         ? 'video/webm;codecs=vp9'
         : 'video/webm';
 
-      const stream = exportCanvas.captureStream(30);
+      const bitrate =
+        targetW * targetH > 2_400_000 ? 12_000_000 : 7_000_000;
+      const stream = exportCanvas.captureStream(fps);
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 6_000_000,
+        videoBitsPerSecond: bitrate,
       });
 
       const chunks: Blob[] = [];
@@ -2006,63 +2129,109 @@ export const StravaViewport3D = forwardRef<
         };
       });
 
-      recorder.start();
+      try {
+        const exportAspect = targetW / targetH;
+        engine.renderer.setPixelRatio(1);
+        engine.renderer.setSize(targetW, targetH, false);
+        if (engine.composer) engine.composer.setSize(targetW, targetH);
+        if (engine.bloomPass) engine.bloomPass.resolution.set(targetW, targetH);
 
-      // 12 seconds @ 30fps = 360 frames
-      const totalFrames = 360;
-      for (let f = 0; f <= totalFrames; f++) {
-        const progress = f / totalFrames;
-        const t = progress * maxSec;
+        engine.camera.aspect = exportAspect;
+        if (exportAspect < 1) {
+          engine.camera.fov = Math.min(
+            74,
+            (2 *
+              Math.atan(
+                Math.tan((prevFov * Math.PI) / 360) /
+                  Math.max(0.54, exportAspect),
+              ) *
+              180) /
+              Math.PI,
+          );
+        }
+        engine.camera.updateProjectionMatrix();
 
-        if (curSettings.autoOrbit) {
-          _vec3A.copy(engine.camera.position).sub(engine.controls.target);
-          const angle = 0.008;
-          const cos = Math.cos(angle);
-          const sin = Math.sin(angle);
-          const nx = _vec3A.x * cos - _vec3A.z * sin;
-          const nz = _vec3A.x * sin + _vec3A.z * cos;
-          _vec3A.x = nx;
-          _vec3A.z = nz;
-          engine.camera.position.copy(engine.controls.target).add(_vec3A);
-          engine.controls.update();
+        if (exportOptions.hideHomeBeacon) {
+          engine.homeGroup.visible = false;
         }
 
-        engine.updateFrameState(t);
+        recorder.start();
+
+        const totalFrames = Math.max(
+          1,
+          Math.round(exportOptions.videoDurationSec * fps),
+        );
+        const frameDelayMs = Math.max(8, Math.round(1000 / fps));
+        const srcCanvas = engine.renderer.domElement;
+
+        for (let f = 0; f <= totalFrames; f++) {
+          if (signal?.aborted) break;
+
+          const progress = f / totalFrames;
+          const t = progress * maxSec;
+
+          if (exportOptions.videoAutoOrbit) {
+            _vec3A.copy(engine.camera.position).sub(engine.controls.target);
+            const angle = (0.14 * 1) / fps;
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            const nx = _vec3A.x * cos - _vec3A.z * sin;
+            const nz = _vec3A.x * sin + _vec3A.z * cos;
+            _vec3A.x = nx;
+            _vec3A.z = nz;
+            engine.camera.position.copy(engine.controls.target).add(_vec3A);
+            engine.controls.update();
+          }
+
+          engine.updateFrameState(t);
+          engine.renderImmediate();
+
+          ctx.clearRect(0, 0, targetW, targetH);
+          ctx.drawImage(srcCanvas, 0, 0, targetW, targetH);
+          drawExportHud(
+            ctx,
+            targetW,
+            targetH,
+            datasetTitle,
+            curActs,
+            t,
+            maxSec,
+            palette.isLight,
+            exportOptions,
+          );
+
+          onProgress(Math.round(progress * 100));
+          await new Promise((r) => window.setTimeout(r, frameDelayMs));
+        }
+
+        recorder.stop();
+        const blob = await finished;
+        if (!signal?.aborted) {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `activityvid-${targetW}x${targetH}.webm`;
+          a.click();
+          URL.revokeObjectURL(url);
+          tickCb(maxSec);
+        }
+      } finally {
+        if (recorder.state !== 'inactive') {
+          recorder.stop();
+        }
+        engine.camera.position.copy(savedCameraPos);
+        engine.homeGroup.visible = prevHomeVisible;
+        engine.camera.aspect = prevAspect;
+        engine.camera.fov = prevFov;
+        engine.camera.updateProjectionMatrix();
+        engine.controls.update();
+        engine.renderer.setPixelRatio(prevPixelRatio);
+        engine.renderer.setSize(viewW, viewH, false);
+        if (engine.composer) engine.composer.setSize(viewW, viewH);
+        if (engine.bloomPass) engine.bloomPass.resolution.set(viewW, viewH);
+        engine.updateFrameState(propsRef.current.elapsedSec);
         engine.renderImmediate();
-
-        ctx.clearRect(0, 0, exportCanvas.width, exportCanvas.height);
-        ctx.drawImage(
-          srcCanvas,
-          0,
-          0,
-          exportCanvas.width,
-          exportCanvas.height,
-        );
-        drawExportHud(
-          ctx,
-          exportCanvas.width,
-          exportCanvas.height,
-          datasetTitle,
-          curActs,
-          t,
-          maxSec,
-          palette.isLight,
-        );
-
-        onProgress(Math.round(progress * 100));
-        // Pace frame delivery to 30fps MediaRecorder
-        await new Promise((r) => window.setTimeout(r, 33));
       }
-
-      recorder.stop();
-      const blob = await finished;
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'activityvid-motion-graphic.webm';
-      a.click();
-      URL.revokeObjectURL(url);
-      tickCb(maxSec);
     },
   }));
 

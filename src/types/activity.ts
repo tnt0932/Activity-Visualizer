@@ -132,3 +132,33 @@ export interface PaletteConfig {
   hudMutedCss: string;
   hudAccentCss: string;
 }
+
+export type ExportMode = 'snapshot' | 'video';
+
+export type AspectRatioPreset =
+  | '16:9'
+  | '9:16'
+  | '4:5'
+  | '1:1'
+  | '4:3'
+  | 'viewport';
+
+export type ResolutionTier = '720p' | '1080p' | '1440p' | '4k';
+
+export type HudPosition = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-center';
+
+export interface ExportOptions {
+  mode: ExportMode;
+  aspectRatio: AspectRatioPreset;
+  resolution: ResolutionTier;
+  showDataPanel: boolean;
+  showTimerAndCounts: boolean;
+  showHistogram: boolean;
+  showTitleAndDistance: boolean;
+  hudPosition: HudPosition;
+  hideHomeBeacon: boolean;
+  videoDurationSec: number;
+  videoFps: 30 | 60;
+  videoAutoOrbit: boolean;
+}
+
